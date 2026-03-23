@@ -2,11 +2,7 @@
 pragma solidity ^0.8.25;
 
 import {ReceiverTemplate} from "./ReceiverTemplate.sol";
-
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-}
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 contract Bridge is ReceiverTemplate {
     uint256 public constant CROSS_CHAIN_DELAY = 10 minutes;
@@ -29,7 +25,8 @@ contract Bridge is ReceiverTemplate {
     }
 
     mapping(uint256 => SrcChainIntent) public srcChainIntents;
-    mapping(uint256 => DstChainIntent) public dstChainIntents;
+    // srcChainId => srcChainIntentId => DstChainIntent
+    mapping(uint256 => mapping(uint256 => DstChainIntent)) public dstChainIntents;
     
     uint256 public intentId;
     
@@ -49,6 +46,7 @@ contract Bridge is ReceiverTemplate {
     }
 
     // 1) Action made by user
+    // it create an intent even for dstChainId not supported, workflow won't process it (save fees on removing the intent automatically)
     function createIntent(
         address tokenSrcChain,
         address tokenDstChain,
@@ -90,8 +88,8 @@ contract Bridge is ReceiverTemplate {
     }
 
     // 3) Action made by user (intent can be accepted on dstChain)
-    function acceptIntent(uint256 intentId, address receiver) external {
-        DstChainIntent memory intent = dstChainIntents[intentId];
+    function acceptIntent(uint256 srcChainId, uint256 srcChainIntentId, address receiver) external {
+        DstChainIntent memory intent = dstChainIntents[srcChainId][srcChainIntentId];
 
         // check if it is not expired
         if (intent.deadline < block.timestamp) revert IntentExpired();
@@ -101,14 +99,14 @@ contract Bridge is ReceiverTemplate {
         // srcChainAmount will be received by accepter at srcChain
         IERC20(intent.tokenDstChain).transferFrom(msg.sender, intent.receiver, intent.amountDstChain);
 
-        delete dstChainIntents[intentId];
+        delete dstChainIntents[srcChainId][srcChainIntentId];
 
         emit BridgeFinalized(intent.srcChainId, intent.srcChainIntentId, receiver);
     }
 
     // 2) Action triggered by cre workflow
     function _addDstChainIntent(DstChainIntent memory intent) internal {
-        dstChainIntents[++intentId] = intent;
+        dstChainIntents[intent.srcChainId][intent.srcChainIntentId] = intent;
     }
  
     // 4) Action called by user only in the chain where the intent is created
